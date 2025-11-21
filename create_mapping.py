@@ -4,6 +4,7 @@ import sys
 import logging
 from pathlib import Path
 import os
+from tqdm import tqdm
 
 # 1. Configure Logging
 logging.basicConfig(
@@ -12,6 +13,11 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 logger = logging.getLogger(__name__)
+
+def get_duration_from_text_file(text_file_json: Path) -> float:
+    with open(text_file_json, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        return float(data["duration"])
 
 def create_dataset_mapping(parent_dir_str: str):
     """
@@ -35,7 +41,7 @@ def create_dataset_mapping(parent_dir_str: str):
     files_found = 0
     
     # Iterate through audio files
-    for audio_file in audio_dir.glob("*.pt"):
+    for audio_file in tqdm(audio_dir.glob("*.pt"), total=len(list(audio_dir.glob("*.pt"))), desc="Processing audio files"):
         file_id = audio_file.stem
         expected_text_file = text_dir / f"{file_id}.json"
 
@@ -43,7 +49,8 @@ def create_dataset_mapping(parent_dir_str: str):
             # Store absolute paths as strings
             mapping[file_id] = {
                 "audio": str(audio_file),
-                "txt": str(expected_text_file)
+                "txt": str(expected_text_file),
+                "duration": get_duration_from_text_file(expected_text_file)
             }
             files_found += 1
         else:
