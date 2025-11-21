@@ -71,11 +71,11 @@ def save_spec(spec, save_path, row_id):
    audio_path = os.path.join(audio_root, f"{row_id}.pt")
    torch.save(spec, audio_path)
 
-def save_text(data, save_path, row_id):
+def save_text(data, save_path, row_id, duration):
     assert os.path.exists(os.path.dirname(save_path)), f"Directory {os.path.dirname(save_path)} does not exist."
     json_root = os.path.join(save_path, "text")
     assert os.path.exists(json_root), f"Directory {json_root} does not exist."
-    data = {"word_timestamps": data}
+    data = {"word_timestamps": data, "duration": duration}
     json_path = os.path.join(json_root, f"{row_id}.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
@@ -85,6 +85,11 @@ def sign_completion(save_path, parquet_id):
     completion_file = os.path.join(save_path, f"signed_completions.txt")
     with open(completion_file, "a") as f:
         f.write(f"{parquet_id}\n")
+
+def get_duration_from_waveform(waveform, sampling_rate=16000):
+    num_samples = waveform.shape[-1]
+    duration_seconds = num_samples / sampling_rate
+    return duration_seconds
 
 def main(device, start, end, save_path):
     logger.info(f"Loading alignment model on device {device}...")
@@ -105,10 +110,11 @@ def main(device, start, end, save_path):
         for row in range(len(df)):
             logger.info(f"Processing row {row} out of {len(df)} in parquet {parquet} ({parquet_id})...")
             timestamps, audio = align_sample(df[row], alignment_model, alignment_tokenizer, device=device)
+            duration = get_duration_from_waveform(audio, sampling_rate=SAMPLING_FREQ)
             spectrogram = to_spectogram(audio.cpu().float())
             row_id = f'{parquet_id}_{row}'
             save_spec(spectrogram.half(), save_path, row_id)
-            save_text(timestamps, save_path, row_id)
+            save_text(timestamps, save_path, row_id, duration)
             logger.info(f"Completed: row {row} out of {len(df)} in parquet {parquet} ({parquet_id})")
         logger.info(f"Completed: parquet {parquet} ({parquet_id}) out of {len(parquets)}")
         sign_completion(save_path, parquet_id)
