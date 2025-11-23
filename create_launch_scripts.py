@@ -82,7 +82,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--total_parquets",
         type=int,
-        default=1500,
+        default=900,
         help="Total number of parquet files to process.",
     )
     parser.add_argument(
