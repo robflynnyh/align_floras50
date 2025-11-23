@@ -20,6 +20,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 fs = HfFileSystem()
+import time
 
 def load_audio(audio, dtype: torch.dtype, device: str):
     waveform, audio_sf = torchaudio.load(audio)  # waveform: channels X T
@@ -38,12 +39,20 @@ def get_all_parquets(dataset_path = "datasets/espnet/floras/monolingual/train-*.
   return parquets
 
 
-def read_parquet(id):
-  split = f'monolingual/{id}'
-  df = pl.read_parquet('hf://datasets/espnet/floras/' + split)
-  return df
+def read_parquet(id, retries=10, delay_s=120):
+    retry_count = 0
+    while retry_count < retries:
+      try:
+        split = f'monolingual/{id}'
+        df = pl.read_parquet('hf://datasets/espnet/floras/' + split)
+        return df
+      except Exception as e:
+          logger.error(f"Error reading parquet {id}: {e}. Retrying in {delay_s} seconds...")
+          time.sleep(delay_s)
+          retry_count += 1
+    raise Exception(f"Failed to read parquet {id} after {retries} retries.")
 
-def align_sample(row, alignment_model, alignment_tokenizer, bsz=16, device='cuda'):
+def align_sample(row, alignment_model, alignment_tokenizer, bsz=8, device='cuda'):
   text = row["text"][0]
   audio_bytes = row["audio"][0]["bytes"]
   audio = load_audio(audio_bytes, dtype=torch.float16 if device == "cuda" else torch.float32, device=device)
@@ -86,6 +95,14 @@ def sign_completion(save_path, parquet_id):
     with open(completion_file, "a") as f:
         f.write(f"{parquet_id}\n")
 
+def check_completion(save_path, parquet_id):
+    completion_file = os.path.join(save_path, f"signed_completions.txt")
+    if not os.path.exists(completion_file):
+        return False
+    with open(completion_file, "r") as f:
+        completed = f.read().splitlines()
+    return str(parquet_id) in completed
+
 def get_duration_from_waveform(waveform, sampling_rate=16000):
     num_samples = waveform.shape[-1]
     duration_seconds = num_samples / sampling_rate
@@ -105,6 +122,9 @@ def main(device, start, end, save_path):
 
     for i, parquet in enumerate(parquets):
         parquet_id = i + start
+        if check_completion(save_path, parquet_id):
+            logger.info(f"Skipping already completed parquet {parquet} ({parquet_id})...")
+            continue
         logger.info(f"Reading parquet {parquet} ({parquet_id})...")
         df = read_parquet(parquet)
         for row in range(len(df)):

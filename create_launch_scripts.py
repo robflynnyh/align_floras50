@@ -76,7 +76,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_gpus",
         type=int,
-        default=11,
+        default=16,
         help="Number of GPUs to split the alignment over.",
     )
     parser.add_argument(
