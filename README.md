@@ -18,3 +18,8 @@ create_mapping.py
 - creates a dictionary containing sample id and the corresponding spec.pt (audio) and alignment (text) paths
 - Also stores the duration (to help efficient batch creation during training)
 - the completed file can then be used by a dataloader for ASR training
+
+print_unique_completions.py
+- looks in target directory and counts number of parquets that have been logged as complete out of total (900)
+
+all files use default path that are unique to my dir on sheffield HPC, but can be configured otherwise via args
