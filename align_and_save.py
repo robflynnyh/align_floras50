@@ -20,7 +20,14 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 fs = HfFileSystem()
+import resource
 import time
+
+def set_memory_limit(max_mb:int):
+    """Sets a soft memory limit on the current process."""
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    # Convert MB to Bytes
+    resource.setrlimit(resource.RLIMIT_AS, (max_mb * 1024 * 1024, hard))
 
 def load_audio(audio, dtype: torch.dtype, device: str):
     waveform, audio_sf = torchaudio.load(audio)  # waveform: channels X T
@@ -127,17 +134,30 @@ def main(device, start, end, save_path):
             continue
         logger.info(f"Reading parquet {parquet} ({parquet_id})...")
         df = read_parquet(parquet)
+        errors = 0
         for row in range(len(df)):
-            logger.info(f"Processing row {row} out of {len(df)} in parquet {parquet} ({parquet_id})...")
-            timestamps, audio = align_sample(df[row], alignment_model, alignment_tokenizer, device=device)
-            duration = get_duration_from_waveform(audio, sampling_rate=SAMPLING_FREQ)
-            spectrogram = to_spectogram(audio.cpu().float())
-            row_id = f'{parquet_id}_{row}'
-            save_spec(spectrogram.half(), save_path, row_id)
-            save_text(timestamps, save_path, row_id, duration)
-            logger.info(f"Completed: row {row} out of {len(df)} in parquet {parquet} ({parquet_id})")
-        logger.info(f"Completed: parquet {parquet} ({parquet_id}) out of {len(parquets)}")
-        sign_completion(save_path, parquet_id)
+            try:
+                logger.info(f"Processing row {row} out of {len(df)} in parquet {parquet} ({parquet_id})...")
+                timestamps, audio = align_sample(df[row], alignment_model, alignment_tokenizer, device=device)
+                duration = get_duration_from_waveform(audio, sampling_rate=SAMPLING_FREQ)
+                spectrogram = to_spectogram(audio.cpu().float())
+                row_id = f'{parquet_id}_{row}'
+                save_spec(spectrogram.half(), save_path, row_id)
+                save_text(timestamps, save_path, row_id, duration)
+                logger.info(f"Completed: row {row} out of {len(df)} in parquet {parquet} ({parquet_id})")
+            except MemoryError:
+                logger.error(f"MemoryError encountered while processing row {row} in parquet {parquet} ({parquet_id}). Skipping this row.")
+                errors += 1
+            except Exception as e:
+                logger.error(f"Error processing row {row} in parquet {parquet} ({parquet_id}): {e}. Skipping this row.")
+                errors += 1
+            finally:
+                if errors >= 10:
+                    logger.error(f"Encountered {errors} errors in parquet {parquet} ({parquet_id}). Killing the process, please debug.")
+                    raise Exception(f"Too many errors (10) in parquet {parquet} ({parquet_id}).")  
+        logger.info(f"Completed: parquet {parquet} ({parquet_id}) out of {len(parquets)} - encountered {errors} errors.")
+        if errors == 0:
+            sign_completion(save_path, parquet_id)
     
 
 
@@ -168,12 +188,19 @@ if __name__ == "__main__":
          default="/mnt/parscratch/users/acp21rjf/floras50aligned/", 
          help="Path to save the aligned results.",
     )
+    parser.add_argument(
+        "--max_cpu_mem",
+        type=int,
+        default=100,
+        help="Maximum CPU memory (in GB) to use during processing. Used to catch/avoid kills due to OOM.",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.save_path, exist_ok=True)
     os.makedirs(os.path.join(args.save_path, "audio"), exist_ok=True)
     os.makedirs(os.path.join(args.save_path, "text"), exist_ok=True)
 
+    set_memory_limit(args.max_cpu_mem * 1024) 
 
     main(args.device, args.start, args.end, args.save_path)
 
